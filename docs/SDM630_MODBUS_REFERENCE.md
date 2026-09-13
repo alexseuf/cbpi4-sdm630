@@ -22,7 +22,7 @@ Die von diesem Plugin verwendeten Messwerte liegen in den **Input Registers (3X)
 
 Beispiel: Das Herstellerregister `30013` entspricht der 0-basierten PDU-Adresse `12` (`0x000C`).
 
-## Vom Plugin verwendete Register
+## Vom Plugin direkt verwendete Register
 
 | CraftBeerPi Messwert | Eastron Register | PDU-Adresse (dez.) | PDU-Adresse (hex) | Einheit | Beschreibung laut Eastron |
 |---|---:|---:|---:|---|---|
@@ -39,9 +39,28 @@ Beispiel: Das Herstellerregister `30013` entspricht der 0-basierten PDU-Adresse 
 | Energie Bezug | 30073 | 72 | 0x0048 | kWh | Total Import kWh |
 | Energie Einspeisung | 30075 | 74 | 0x004A | kWh | Total Export kWh |
 
+## Abgeleitete 24-h-Werte
+
+Der SDM630 besitzt **keine eigenen Register für die Energie der letzten 24 Stunden**. Deshalb berechnet das Plugin diese Werte aus den fortlaufenden Gesamtzählern:
+
+- `Bezug 24 h = Energie Bezug jetzt - Energie Bezug vor 24 h`
+- `Einspeisung 24 h = Energie Einspeisung jetzt - Energie Einspeisung vor 24 h`
+
+Dazu werden die beiden Register `30073` und `30075` ungefähr einmal pro Minute historisch gespeichert. Das Plugin hält etwa 26 Stunden Historie vor und interpoliert den Zählerstand an der 24-Stunden-Grenze zwischen den benachbarten Samples.
+
+Persistente Historie:
+
+```text
+~/.craftbeerpi4-sdm630/energy_history.json
+```
+
+Nach einem Neustart von CraftBeerPi wird diese Datei wieder eingelesen. Ein echter 24-h-Wert steht erst zur Verfügung, wenn mindestens 24 Stunden Historie gesammelt wurden; vorher liefert der jeweilige 24-h-Sensor `0.000 kWh`.
+
+Wenn ein Rücksprung eines Energiezählers erkannt wird, beispielsweise nach Zähler-Reset oder Geräteaustausch, beginnt die 24-h-Historie für diesen Zähler neu.
+
 ## Zuordnung im Plugin
 
-Die 0-basierten Startadressen stehen in `cbpi4-sdm630/__init__.py` in `MEASUREMENTS`.
+Die direkt gelesenen Register und die beiden abgeleiteten Werte stehen in `cbpi4-sdm630/__init__.py` in `MEASUREMENTS`.
 
 ```python
 MEASUREMENTS = {
@@ -57,6 +76,8 @@ MEASUREMENTS = {
     "Strom L3": {"address": 10, "decimals": 2},
     "Energie Bezug": {"address": 72, "decimals": 3},
     "Energie Einspeisung": {"address": 74, "decimals": 3},
+    "Bezug 24 h": {"derived": "import_24h", "decimals": 3},
+    "Einspeisung 24 h": {"derived": "export_24h", "decimals": 3},
 }
 ```
 
