@@ -4,14 +4,48 @@ CraftBeerPi 4 plugin for an Eastron SDM630 connected via Modbus RTU and a USB/RS
 
 ## Measurements
 
-The plugin provides a CraftBeerPi sensor type named `SDM630 Power`. Create four sensor instances to display:
+The plugin provides a CraftBeerPi sensor type named `SDM630 Power`. Multiple sensor instances can be created, each selecting one SDM630 measurement.
 
-- Leistung L1: SDM630 input register 30013 / PDU address 12
-- Leistung L2: SDM630 input register 30015 / PDU address 14
-- Leistung L3: SDM630 input register 30017 / PDU address 16
-- Gesamtleistung: SDM630 input register 30053 / PDU address 52
+Available measurements:
 
-Values are active power in watts. The registers are read as 32-bit floating point values with Modbus function code 04.
+- Gesamtleistung: register 30053 / PDU address 52, W
+- Leistung L1: register 30013 / PDU address 12, W
+- Leistung L2: register 30015 / PDU address 14, W
+- Leistung L3: register 30017 / PDU address 16, W
+- Spannung L1: register 30001 / PDU address 0, V L-N
+- Spannung L2: register 30003 / PDU address 2, V L-N
+- Spannung L3: register 30005 / PDU address 4, V L-N
+- Strom L1: register 30007 / PDU address 6, A
+- Strom L2: register 30009 / PDU address 8, A
+- Strom L3: register 30011 / PDU address 10, A
+- Energie Bezug: register 30073 / PDU address 72, kWh
+- Energie Einspeisung: register 30075 / PDU address 74, kWh
+
+The registers are read as 32-bit floating point values with Modbus function code 04.
+
+Display rounding:
+
+- power: 1 decimal place
+- voltage: 1 decimal place
+- current: 2 decimal places
+- energy: 3 decimal places
+
+## CraftBeerPi default handling
+
+CraftBeerPi 4.7.x does not visibly prefill all plugin properties when a new sensor is created. This plugin follows the common approach used by established CBPi plugins: empty properties are accepted and sensible defaults are applied internally by the plugin.
+
+If a field is left empty, the plugin uses:
+
+- Port: first detected serial interface, with `/dev/serial/by-id/...` preferred
+- Slave: `1`
+- Baudrate: `9600`
+- Parity: `N`
+- Stopbits: `1`
+- Messwert: `Gesamtleistung`
+- Intervall: `2 s`
+- Timeout: `0.5 s`
+
+The CraftBeerPi descriptions also show these defaults as `leer = ...`.
 
 ## Tested hardware settings
 
@@ -75,16 +109,24 @@ A complete step-by-step description of the tested Raspberry Pi setup, the CraftB
 
 ## CraftBeerPi configuration
 
-Create four hardware sensors of type `SDM630 Power`:
+Create one hardware sensor of type `SDM630 Power` for every value you want to display. For example:
 
-1. `SDM630 L1` with `Messwert = Leistung L1`
-2. `SDM630 L2` with `Messwert = Leistung L2`
-3. `SDM630 L3` with `Messwert = Leistung L3`
-4. `SDM630 Gesamt` with `Messwert = Gesamtleistung`
+1. `SDM630 L1 Leistung` with `Messwert = Leistung L1`
+2. `SDM630 L2 Leistung` with `Messwert = Leistung L2`
+3. `SDM630 L3 Leistung` with `Messwert = Leistung L3`
+4. `SDM630 Gesamtleistung` with `Messwert = Gesamtleistung`
+5. `SDM630 Spannung L1` with `Messwert = Spannung L1`
+6. `SDM630 Spannung L2` with `Messwert = Spannung L2`
+7. `SDM630 Spannung L3` with `Messwert = Spannung L3`
+8. `SDM630 Strom L1` with `Messwert = Strom L1`
+9. `SDM630 Strom L2` with `Messwert = Strom L2`
+10. `SDM630 Strom L3` with `Messwert = Strom L3`
+11. `SDM630 Bezug` with `Messwert = Energie Bezug`
+12. `SDM630 Einspeisung` with `Messwert = Energie Einspeisung`
 
-Use identical Port, Slave, Baudrate, Parity and Stopbits settings for all four.
+Use identical Port, Slave, Baudrate, Parity and Stopbits settings for all sensor instances belonging to the same SDM630.
 
-The plugin uses a shared asynchronous lock and a short-lived cache. Therefore four CraftBeerPi sensor instances do not try to access the same USB/RS485 adapter simultaneously.
+The plugin uses a shared asynchronous lock and a short-lived cache. Therefore multiple CraftBeerPi sensor instances do not try to access the same USB/RS485 adapter simultaneously.
 
 ## Typical settings
 
