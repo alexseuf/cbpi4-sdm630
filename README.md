@@ -21,6 +21,22 @@ The plugin can now be used as a compact electrical-energy dashboard inside Craft
 
 The short-term counters work like a vehicle trip counter. Resetting them does **not** modify or reset the SDM630's own cumulative energy registers.
 
+## Why a wired Modbus meter?
+
+A useful advantage of the SDM630 Modbus family is the **direct wired connection to the Raspberry Pi**. With a USB/RS485 adapter, the meter communicates locally with CraftBeerPi over Modbus RTU.
+
+Compared with network-based energy meters such as a Shelly 3EM, this setup does **not require Wi-Fi or Ethernet for the meter connection**. Once the Raspberry Pi and SDM630 are connected by RS485, measurement acquisition can continue independently of the local Wi-Fi network, access point or router.
+
+This can be particularly useful in brewing-control installations because:
+
+- the meter-to-controller link is a dedicated wired RS485 connection,
+- no Wi-Fi coverage is required at the electrical cabinet,
+- measurement acquisition does not depend on a network connection between the meter and Raspberry Pi,
+- RS485 is designed for robust serial communication and can be used over comparatively long cable runs,
+- several Modbus devices can in principle share one RS485 bus when correctly addressed and wired.
+
+The Raspberry Pi itself may of course still use Ethernet or Wi-Fi for the CraftBeerPi web interface and other network services; only the **SDM630 measurement connection** is independent of them.
+
 ## Meter variants
 
 The Eastron SDM family contains different hardware variants. The important distinction is how the current is measured.
