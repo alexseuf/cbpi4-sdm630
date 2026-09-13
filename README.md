@@ -2,6 +2,18 @@
 
 CraftBeerPi 4 plugin for an Eastron SDM630 connected via Modbus RTU and a USB/RS485 adapter.
 
+## Official Eastron Modbus documentation
+
+Official manufacturer documentation:
+
+**Eastron SDM630Modbus Smart Meter – Modbus Protocol Implementation V1.8**
+
+https://www.eastroneurope.com/images/uploads/products/protocol/SDM630_MODBUS_Protocol.pdf
+
+A repository-local description of the exact registers used by this plugin is available here:
+
+[SDM630 Modbus reference – registers used by this plugin](docs/SDM630_MODBUS_REFERENCE.md)
+
 ## Measurements
 
 The plugin provides a CraftBeerPi sensor type named `SDM630 Power`. Multiple sensor instances can be created, each selecting one SDM630 measurement.
