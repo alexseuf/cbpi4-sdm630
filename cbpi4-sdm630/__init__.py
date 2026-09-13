@@ -29,30 +29,50 @@ PARITY = {
 
 
 def _get_serial_ports():
-    """Return active serial ports, preferring stable /dev/serial/by-id paths.
+    """Return active serial ports.
 
-    If a device is already represented by a by-id symlink, its /dev/ttyUSB*
-    or /dev/ttyACM* alias is not added a second time.
+    Stable /dev/serial/by-id paths are preferred for USB adapters. In addition,
+    Raspberry Pi internal UARTs are offered when present, including /dev/serial0,
+    /dev/serial1, /dev/ttyAMA* and /dev/ttyS*.
+
+    Aliases that point to a device already listed are suppressed so the same
+    physical UART normally appears only once.
     """
     ports = []
     represented_devices = set()
 
-    for path in sorted(glob.glob("/dev/serial/by-id/*")):
-        if os.path.exists(path):
-            ports.append(path)
-            represented_devices.add(os.path.realpath(path))
+    def add_path(path):
+        if not os.path.exists(path):
+            return
+        real_path = os.path.realpath(path)
+        if real_path in represented_devices:
+            return
+        ports.append(path)
+        represented_devices.add(real_path)
 
+    # 1) Stable USB serial names are best for USB/RS485 adapters.
+    for path in sorted(glob.glob("/dev/serial/by-id/*")):
+        add_path(path)
+
+    # 2) Raspberry Pi stable aliases for onboard UARTs.
+    # serial0 normally points to the primary UART enabled in the device tree.
+    # serial1 can exist on some configurations as the secondary UART.
+    for path in ("/dev/serial0", "/dev/serial1"):
+        add_path(path)
+
+    # 3) USB serial adapters without a by-id entry.
     for pattern in ("/dev/ttyUSB*", "/dev/ttyACM*"):
         for path in sorted(glob.glob(pattern)):
-            if not os.path.exists(path):
-                continue
-            real_path = os.path.realpath(path)
-            if real_path not in represented_devices:
-                ports.append(path)
-                represented_devices.add(real_path)
+            add_path(path)
 
-    # Keep the configuration dialog usable even when the adapter is unplugged
-    # while CraftBeerPi starts.
+    # 4) Direct onboard UART device nodes. These are useful when no serial0/1
+    # alias exists or when a specific UART must be selected deliberately.
+    for pattern in ("/dev/ttyAMA*", "/dev/ttyS*"):
+        for path in sorted(glob.glob(pattern)):
+            add_path(path)
+
+    # Keep the configuration dialog usable even when no serial interface is
+    # visible while CraftBeerPi starts.
     if not ports:
         ports.append("/dev/ttyUSB0")
 
@@ -136,7 +156,7 @@ async def _get_values(port, slave, baudrate, parity, stopbits, timeout, cache_ti
 
 @parameters([
     Property.Select(label="Port", options=SERIAL_PORT_OPTIONS,
-                    description="Aktive serielle Schnittstelle; stabile /dev/serial/by-id-Pfade werden bevorzugt"),
+                    description="Aktive serielle Schnittstelle; /dev/serial/by-id und Raspberry-Pi-UARTs werden automatisch erkannt"),
     Property.Number(label="Slave", configurable=True, default_value=1,
                     description="Modbus-Adresse des SDM630 (Default: 1)"),
     # CBPi 4.7.x does not expose a default_value for Select properties in its
