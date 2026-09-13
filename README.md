@@ -27,15 +27,17 @@ The serial settings and device path remain configurable in CraftBeerPi.
 
 ## Installation
 
-On a CraftBeerPi 4 installation managed with pipx:
+On a CraftBeerPi 4 installation managed with pipx, install directly from GitHub:
 
 ```bash
-git clone https://github.com/alexseuf/cbpi4-sdm630.git
-cd cbpi4-sdm630
-pipx runpip cbpi4 install .
+pipx runpip cbpi4 install https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
 ```
 
 Then restart CraftBeerPi.
+
+A complete step-by-step description of the tested Raspberry Pi setup, the CraftBeerPi service/restart commands, FTDI wiring and the standalone RS485/Modbus test is available here:
+
+[Installation and RS485 test](docs/INSTALLATION_AND_RS485_TEST.md)
 
 ## CraftBeerPi configuration
 
