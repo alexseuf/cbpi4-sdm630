@@ -31,9 +31,10 @@ MEASUREMENTS = {
     "Strom L3": {"address": 10, "decimals": 2},        # 30011, A
     "Energie Bezug": {"address": 72, "decimals": 3},   # 30073, kWh import
     "Energie Einspeisung": {"address": 74, "decimals": 3},  # 30075, kWh export
-    # Derived values calculated from the cumulative energy registers above.
-    "Bezug 24 h": {"derived": "import_24h", "decimals": 3},
-    "Einspeisung 24 h": {"derived": "export_24h", "decimals": 3},
+    # Derived trip-counter values. They are the difference between the current
+    # cumulative SDM630 energy registers and a persistent reset baseline.
+    "Kurzzeitzähler Bezug": {"derived": "trip_import", "decimals": 3},
+    "Kurzzeitzähler Einspeisung": {"derived": "trip_export", "decimals": 3},
 }
 
 PARITY = {
@@ -42,13 +43,7 @@ PARITY = {
     "O": serial.PARITY_ODD,
 }
 
-# The SDM630 has no native "last 24 h" register. The plugin stores one
-# import/export counter sample per minute and keeps enough history to calculate
-# a rolling 24-hour difference. The history survives CraftBeerPi restarts.
-HISTORY_SAMPLE_INTERVAL = 60.0
-HISTORY_RETENTION = 26 * 60 * 60
-HISTORY_WINDOW = 24 * 60 * 60
-HISTORY_FILE = Path.home() / ".craftbeerpi4-sdm630" / "energy_history.json"
+COUNTER_FILE = Path.home() / ".craftbeerpi4-sdm630" / "short_term_counters.json"
 
 
 def _get_serial_ports():
@@ -73,20 +68,13 @@ def _get_serial_ports():
         ports.append(path)
         represented_devices.add(real_path)
 
-    # 1) Stable USB serial names are best for USB/RS485 adapters.
     for path in sorted(glob.glob("/dev/serial/by-id/*")):
         add_path(path)
-
-    # 2) Raspberry Pi stable aliases for onboard UARTs.
     for path in ("/dev/serial0", "/dev/serial1"):
         add_path(path)
-
-    # 3) USB serial adapters without a by-id entry.
     for pattern in ("/dev/ttyUSB*", "/dev/ttyACM*"):
         for path in sorted(glob.glob(pattern)):
             add_path(path)
-
-    # 4) Direct onboard UART device nodes.
     for pattern in ("/dev/ttyAMA*", "/dev/ttyS*"):
         for path in sorted(glob.glob(pattern)):
             add_path(path)
@@ -101,9 +89,9 @@ SERIAL_PORT_OPTIONS = _get_serial_ports()
 DEFAULT_PORT = SERIAL_PORT_OPTIONS[0]
 
 _bus_locks: Dict[str, asyncio.Lock] = {}
-_history_lock = asyncio.Lock()
-_history_loaded = False
-_history = {"version": 1, "meters": {}}
+_counter_lock = asyncio.Lock()
+_counter_state_loaded = False
+_counter_state = {"version": 1, "meters": {}}
 
 
 @dataclass
@@ -123,104 +111,80 @@ def _prop(props, name, default):
     return value
 
 
-def _history_key(port: str, slave: int) -> str:
+def _counter_key(port: str, slave: int) -> str:
     return f"{port}|{slave}"
 
 
-def _load_history_sync():
-    global _history_loaded, _history
-    if _history_loaded:
+def _load_counter_state_sync():
+    global _counter_state_loaded, _counter_state
+    if _counter_state_loaded:
         return
 
     try:
-        if HISTORY_FILE.exists():
-            with HISTORY_FILE.open("r", encoding="utf-8") as f:
+        if COUNTER_FILE.exists():
+            with COUNTER_FILE.open("r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict) and isinstance(data.get("meters"), dict):
-                _history = data
+                _counter_state = data
     except Exception as e:
-        logger.warning("SDM630: energy history could not be loaded from %s: %s",
-                       HISTORY_FILE, e)
+        logger.warning("SDM630: short-term counter state could not be loaded from %s: %s",
+                       COUNTER_FILE, e)
 
-    _history_loaded = True
+    _counter_state_loaded = True
 
 
-def _save_history_sync():
+def _save_counter_state_sync():
     try:
-        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = HISTORY_FILE.with_suffix(".tmp")
+        COUNTER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = COUNTER_FILE.with_suffix(".tmp")
         with tmp.open("w", encoding="utf-8") as f:
-            json.dump(_history, f, separators=(",", ":"))
-        os.replace(tmp, HISTORY_FILE)
+            json.dump(_counter_state, f, separators=(",", ":"))
+        os.replace(tmp, COUNTER_FILE)
     except Exception as e:
-        logger.warning("SDM630: energy history could not be saved to %s: %s",
-                       HISTORY_FILE, e)
+        logger.warning("SDM630: short-term counter state could not be saved to %s: %s",
+                       COUNTER_FILE, e)
 
 
-def _counter_at(samples, field, target_ts):
-    """Interpolate a cumulative counter at target_ts from stored samples."""
-    if not samples or float(samples[0]["t"]) > target_ts:
-        return None
+def _get_short_term_values_sync(port: str, slave: int, import_kwh: float,
+                                export_kwh: float):
+    _load_counter_state_sync()
+    key = _counter_key(port, slave)
+    meter = _counter_state["meters"].get(key)
 
-    previous = samples[0]
-    for current in samples[1:]:
-        if float(current["t"]) >= target_ts:
-            dt = float(current["t"]) - float(previous["t"])
-            if dt <= 0:
-                return float(previous[field])
-            fraction = (target_ts - float(previous["t"])) / dt
-            return float(previous[field]) + fraction * (
-                float(current[field]) - float(previous[field])
-            )
-        previous = current
+    # First use: start the short-term counters at zero.
+    if not isinstance(meter, dict):
+        meter = {
+            "import_base": import_kwh,
+            "export_base": export_kwh,
+            "reset_time": time.time(),
+        }
+        _counter_state["meters"][key] = meter
+        _save_counter_state_sync()
 
-    return float(previous[field])
+    # If the SDM630 itself was reset or replaced, use the new cumulative values
+    # as the new baseline so no negative trip-counter value can occur.
+    if (import_kwh + 1e-6 < float(meter.get("import_base", import_kwh)) or
+            export_kwh + 1e-6 < float(meter.get("export_base", export_kwh))):
+        meter["import_base"] = import_kwh
+        meter["export_base"] = export_kwh
+        meter["reset_time"] = time.time()
+        _save_counter_state_sync()
+
+    trip_import = max(0.0, import_kwh - float(meter["import_base"]))
+    trip_export = max(0.0, export_kwh - float(meter["export_base"]))
+    return trip_import, trip_export
 
 
-def _update_history_sync(port: str, slave: int, import_kwh: float,
-                         export_kwh: float, now_wall: float):
-    _load_history_sync()
-    key = _history_key(port, slave)
-    samples = _history["meters"].setdefault(key, [])
-
-    # If the SDM630 counter was reset or the meter was replaced, start a new
-    # history period instead of reporting a negative 24-hour value.
-    if samples:
-        last = samples[-1]
-        if (import_kwh + 1e-6 < float(last["import"]) or
-                export_kwh + 1e-6 < float(last["export"])):
-            logger.warning("SDM630: energy counter reset detected for %s; "
-                           "24 h history starts again", key)
-            samples.clear()
-
-    should_store = (
-        not samples or
-        (now_wall - float(samples[-1]["t"])) >= HISTORY_SAMPLE_INTERVAL
-    )
-
-    if should_store:
-        samples.append({
-            "t": now_wall,
-            "import": import_kwh,
-            "export": export_kwh,
-        })
-
-        # Keep one sample before the retention boundary for interpolation.
-        cutoff = now_wall - HISTORY_RETENTION
-        while len(samples) > 1 and float(samples[1]["t"]) < cutoff:
-            samples.pop(0)
-
-        _save_history_sync()
-
-    target = now_wall - HISTORY_WINDOW
-    base_import = _counter_at(samples, "import", target)
-    base_export = _counter_at(samples, "export", target)
-
-    # A genuine rolling 24-hour value only exists after 24 hours of history.
-    import_24h = 0.0 if base_import is None else max(0.0, import_kwh - base_import)
-    export_24h = 0.0 if base_export is None else max(0.0, export_kwh - base_export)
-
-    return import_24h, export_24h
+def _reset_short_term_sync(port: str, slave: int, import_kwh: float,
+                           export_kwh: float):
+    _load_counter_state_sync()
+    key = _counter_key(port, slave)
+    _counter_state["meters"][key] = {
+        "import_base": import_kwh,
+        "export_base": export_kwh,
+        "reset_time": time.time(),
+    }
+    _save_counter_state_sync()
 
 
 def _read_all_sync(port: str, slave: int, baudrate: int, parity: str,
@@ -271,18 +235,17 @@ async def _get_values(port, slave, baudrate, parity, stopbits, timeout, cache_ti
             _read_all_sync, port, slave, baudrate, parity, stopbits, timeout
         )
 
-        async with _history_lock:
-            import_24h, export_24h = await asyncio.to_thread(
-                _update_history_sync,
+        async with _counter_lock:
+            trip_import, trip_export = await asyncio.to_thread(
+                _get_short_term_values_sync,
                 port,
                 slave,
                 values["Energie Bezug"],
                 values["Energie Einspeisung"],
-                time.time(),
             )
 
-        values["Bezug 24 h"] = import_24h
-        values["Einspeisung 24 h"] = export_24h
+        values["Kurzzeitzähler Bezug"] = trip_import
+        values["Kurzzeitzähler Einspeisung"] = trip_export
 
         entry.values = values
         entry.timestamp = time.monotonic()
@@ -321,6 +284,44 @@ class SDM630PowerSensor(CBPiSensor):
         self.timeout = float(_prop(self.props, "Timeout", 0.5))
         if self.measurement not in MEASUREMENTS:
             self.measurement = "Gesamtleistung"
+
+    @action("Kurzzeitzähler nullen", parameters=[])
+    async def reset_short_term_counters(self, **kwargs):
+        """Reset both short-term energy counters for this SDM630."""
+        lock = _bus_locks.setdefault(self.port, asyncio.Lock())
+        async with lock:
+            values = await asyncio.to_thread(
+                _read_all_sync,
+                self.port,
+                self.slave,
+                self.baudrate,
+                self.parity,
+                self.stopbits,
+                self.timeout,
+            )
+            async with _counter_lock:
+                await asyncio.to_thread(
+                    _reset_short_term_sync,
+                    self.port,
+                    self.slave,
+                    values["Energie Bezug"],
+                    values["Energie Einspeisung"],
+                )
+
+            # Invalidate all cached reads for this physical meter so the new
+            # zero value becomes visible immediately on the next refresh.
+            for cache_key, entry in _cache.items():
+                if cache_key[0] == self.port and cache_key[1] == self.slave:
+                    entry.timestamp = 0.0
+                    entry.values = {}
+
+        if self.measurement in ("Kurzzeitzähler Bezug", "Kurzzeitzähler Einspeisung"):
+            self.value = 0.0
+            self.push_update(self.value)
+            self.log_data(self.value)
+
+        logger.info("SDM630 short-term counters reset on %s slave %s",
+                    self.port, self.slave)
 
     async def run(self):
         cache_time = max(0.2, self.interval * 0.8)
