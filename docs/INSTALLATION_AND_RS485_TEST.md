@@ -1,18 +1,16 @@
-# Installation, CraftBeerPi service and RS485 test
+# Installation, CraftBeerPi configuration and RS485 test
 
-This document records the setup and test procedure used for the first working installation of `cbpi4-sdm630`.
+This document records the setup and test procedure used for the working `cbpi4-sdm630` installation.
 
 ## Tested CraftBeerPi installation
 
 The Raspberry Pi runs CraftBeerPi 4 via `pipx`.
 
-Verified with:
-
 ```bash
 pipx list
 ```
 
-Result during setup:
+Tested setup:
 
 ```text
 package cbpi4 4.7.4, installed using Python 3.13.5
@@ -25,54 +23,89 @@ The pipx virtual environment is located below the user home directory, e.g.:
 /home/wallbox/.local/share/pipx/venvs/cbpi4
 ```
 
-Plugins therefore have to be installed into the `cbpi4` pipx environment.
-
-Example installation directly from GitHub:
+Install the plugin into this environment:
 
 ```bash
 pipx runpip cbpi4 install https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
-```
-
-A successful installation ends with output similar to:
-
-```text
-Successfully installed cbpi4-sdm630-0.1.0 minimalmodbus-2.1.1
+sudo systemctl restart craftbeerpi.service
 ```
 
 ## Update an existing plugin installation
 
-To update the plugin to the newest version from the GitHub `main` branch:
-
 ```bash
 pipx runpip cbpi4 install --upgrade https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
-```
-
-Then restart CraftBeerPi so the new plugin code is loaded:
-
-```bash
 sudo systemctl restart craftbeerpi.service
 ```
 
-Check the installed package version with:
+Check the installed version:
 
 ```bash
 pipx runpip cbpi4 show cbpi4-sdm630
 ```
 
-The loaded plugin version can also be checked in the CraftBeerPi web interface on the Plugins page.
-
-If the GitHub repository contains changed code but the package version in `setup.py` has not changed, pip may decide that nothing needs to be updated. In that case force a reinstall:
+If necessary, force a reinstall:
 
 ```bash
 pipx runpip cbpi4 install --upgrade --force-reinstall https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
 sudo systemctl restart craftbeerpi.service
 ```
 
-This does not delete the existing CraftBeerPi hardware/sensor configuration; it replaces the installed Python package in the `cbpi4` pipx environment.
+This replaces the Python package but does not delete the existing CraftBeerPi hardware/sensor configuration.
+
+## CraftBeerPi hardware configuration
+
+In **Hardware → Sensors**, add a new sensor and select:
+
+```text
+Type: SDM630 Power
+```
+
+The `Messwert` menu provides the phase powers, total power, phase voltages, phase currents, cumulative energy and the resettable short-term energy counters.
+
+![SDM630 measurement selection in CraftBeerPi](images/hardware-options.jpg)
+
+### Recommended communication settings
+
+```text
+Port:      select the correct /dev/serial/by-id/... device
+Slave:     1
+Baudrate:  9600
+Parity:    N
+Stopbits:  1
+Intervall: 2 s
+Timeout:   0.5 s
+```
+
+If fields are left empty, the plugin applies internal defaults. If multiple serial adapters are connected, explicitly select the correct stable `/dev/serial/by-id/...` path.
+
+Create a separate CraftBeerPi sensor instance for every measurement you want to display. All instances for the same physical SDM630 should use identical serial settings.
+
+### Resettable short-term energy counters – v0.1.5
+
+Two derived measurements are available:
+
+```text
+Kurzzeitzähler Bezug
+Kurzzeitzähler Einspeisung
+```
+
+They behave like a trip counter. The action `Kurzzeitzähler nullen` resets both counters together while leaving the SDM630's cumulative import/export registers unchanged.
+
+The baseline is persisted in:
+
+```text
+~/.craftbeerpi4-sdm630/short_term_counters.json
+```
+
+Therefore the counters survive CraftBeerPi restarts and Raspberry Pi reboots.
+
+A configured dashboard can look like this:
+
+![CraftBeerPi dashboard with SDM630](images/dashboard.jpg)
+
+For the energy widgets, use `kWh` as the displayed unit. Three decimal places give a resolution of 0.001 kWh = 1 Wh.
 
 ## CraftBeerPi service / restart
-
-Current CraftBeerPi installations use the CraftBeerPi autostart mechanism (`cbpi autostart on`) and a systemd unit named `craftbeerpi.service`.
 
 Useful commands:
 
@@ -81,24 +114,18 @@ systemctl status craftbeerpi.service
 sudo systemctl restart craftbeerpi.service
 ```
 
-If the service is installed as a user service instead, use:
+If the service is installed as a user service instead:
 
 ```bash
 systemctl --user status craftbeerpi.service
 systemctl --user restart craftbeerpi.service
 ```
 
-To find the actual active service on a particular installation:
+To locate the active service:
 
 ```bash
 systemctl list-units --type=service | grep -i craftbeer
 systemctl --user list-units --type=service | grep -i craftbeer
-```
-
-The official CraftBeerPi command for starting the server manually is:
-
-```bash
-cbpi start
 ```
 
 ## RS485 hardware used for the test
@@ -109,70 +136,41 @@ USB/RS485 adapter:
 FTDI USB-RS485-WE / FT232R
 ```
 
-Linux detected the adapter as:
-
-```text
-/dev/ttyUSB0
-```
-
-The stable by-id path was:
+Linux detected the adapter as `/dev/ttyUSB0`. The stable by-id path used during testing was:
 
 ```text
 /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A99RF4P0-if00-port0
 ```
 
-This path is preferred over `/dev/ttyUSB0`, because `/dev/ttyUSB0` can change after reconnecting USB devices.
+Prefer the by-id path because `/dev/ttyUSB0` can change when USB devices are reconnected.
 
 ### Check the adapter
 
 ```bash
 ls -l /dev/ttyUSB*
-```
-
-Working result:
-
-```text
-crw-rw----+ 1 root plugdev 188, 0 ... /dev/ttyUSB0
-```
-
-Then check the persistent device name:
-
-```bash
 ls -l /dev/serial/by-id/
 ```
 
-Working result:
-
-```text
-usb-FTDI_FT232R_USB_UART_A99RF4P0-if00-port0 -> ../../ttyUSB0
-```
-
 ### User permissions
-
-Check group membership:
 
 ```bash
 groups
 ```
 
-The user used during the test was already a member of the serial related groups, including `dialout` and `plugdev`.
+The tested user was already a member of the serial-related groups including `dialout` and `plugdev`.
 
 ## FTDI USB-RS485-WE wire assignment
 
-For the FTDI USB-RS485-WE cable used during the test:
+| Wire | Function | Connect to meter |
+|---|---|---|
+| Black | GND | GND, if used |
+| Brown | Terminator 1 | termination only |
+| Red | +5 V output | **do not connect to SDM630 power** |
+| Orange | Data+ / A | RS485 A |
+| Yellow | Data- / B | RS485 B |
+| Green | Terminator 2 | termination only |
 
-| Wire | Function |
-|---|---|
-| Black | GND |
-| Brown | Terminator 1 |
-| Red | +5 V output |
-| Orange | Data+ / A |
-| Yellow | Data- / B |
-| Green | Terminator 2 |
-
-The brown and green wires are the two ends of the internal 120 ohm termination resistor. Only connect them across A/B when the USB/RS485 adapter is physically located at an end of the RS485 bus and termination is required.
-
-Do not use the red +5 V wire to power the SDM630.
+The brown and green wires are the two ends of the cable's internal 120-ohm termination resistor. Use the termination only when the adapter is physically at an end of the RS485 bus and termination is required.
 
 ## SDM630 Modbus settings used during the test
 
@@ -190,37 +188,19 @@ Float format: IEEE754 FLOAT32, big endian
 
 ## Step-by-step RS485 communication test
 
-The SDM630 was deliberately tested outside CraftBeerPi first. This separates serial/Modbus problems from plugin problems.
+Testing the SDM630 outside CraftBeerPi first separates serial/Modbus problems from plugin problems.
 
-### 1. Create a Python virtual environment
+### 1. Create and activate a Python virtual environment
 
 ```bash
 python3 -m venv ~/sdmtest
-```
-
-### 2. Activate it
-
-```bash
 source ~/sdmtest/bin/activate
-```
-
-The shell prompt should then start with something similar to:
-
-```text
-(sdmtest)
-```
-
-### 3. Install the Modbus test packages
-
-```bash
 python -m pip install minimalmodbus pyserial
 ```
 
-Do not install the test packages globally with `pip --user` on current Raspberry Pi OS, because PEP 668 marks the system Python environment as externally managed.
+### 2. Test script
 
-### 4. Test script
-
-Create `~/sdmtest_sdm630.py` with the following content:
+Create `~/sdmtest_sdm630.py`:
 
 ```python
 import minimalmodbus
@@ -254,7 +234,7 @@ for name, address in registers.items():
     print(f"{name}: {value:.1f} W")
 ```
 
-### 5. Run the test
+Run it:
 
 ```bash
 python ~/sdmtest_sdm630.py
@@ -269,43 +249,42 @@ L3: 55.0 W
 Gesamt: 82.7 W
 ```
 
-This confirmed that all of the following were working before the CraftBeerPi plugin was installed:
+This confirms USB detection, Linux permissions, A/B wiring, slave address, serial framing, Modbus RTU communication and FLOAT32 decoding independently of CraftBeerPi.
 
-- USB adapter detection
-- Linux serial permissions
-- RS485 A/B wiring
-- SDM630 slave address
-- baudrate and framing
-- Modbus RTU communication
-- SDM630 power-register decoding
-
-### 6. Leave the test environment
+Leave the test environment with:
 
 ```bash
 deactivate
 ```
 
-## SDM630 registers used by the plugin
+## Registers used by the plugin
 
-| Measurement | SDM register notation | Modbus PDU address | Data type |
+| Measurement | SDM register | PDU address | Unit |
 |---|---:|---:|---|
-| L1 active power | 30013 | 12 | FLOAT32 |
-| L2 active power | 30015 | 14 | FLOAT32 |
-| L3 active power | 30017 | 16 | FLOAT32 |
-| Total system active power | 30053 | 52 | FLOAT32 |
+| Voltage L1 | 30001 | 0 | V |
+| Voltage L2 | 30003 | 2 | V |
+| Voltage L3 | 30005 | 4 | V |
+| Current L1 | 30007 | 6 | A |
+| Current L2 | 30009 | 8 | A |
+| Current L3 | 30011 | 10 | A |
+| Active power L1 | 30013 | 12 | W |
+| Active power L2 | 30015 | 14 | W |
+| Active power L3 | 30017 | 16 | W |
+| Total active power | 30053 | 52 | W |
+| Total import energy | 30073 | 72 | kWh |
+| Total export energy | 30075 | 74 | kWh |
 
-The plugin uses Modbus function code `04` for these input registers.
+All direct values are read with Modbus function code `04` as IEEE-754 FLOAT32 values. The two short-term counters are calculated by the plugin and therefore have no native SDM630 register address.
 
 ## Troubleshooting order
 
-If CraftBeerPi does not show SDM630 values, verify the system in this order:
+If CraftBeerPi does not show SDM630 values, verify in this order:
 
 1. `ls -l /dev/serial/by-id/`
-2. check the FTDI adapter is still present
-3. check RS485 A/B polarity
-4. check SDM630 slave address = 1
-5. check 9600 baud, 8N1
-6. run the standalone Python test again
-7. only after the standalone test succeeds, troubleshoot the CraftBeerPi plugin
-
-This procedure avoids mixing serial-bus problems with CraftBeerPi configuration problems.
+2. FTDI adapter present
+3. correct serial adapter selected in CraftBeerPi
+4. RS485 A/B polarity
+5. SDM630 slave address = 1
+6. 9600 baud, 8N1
+7. standalone Python test
+8. only after the standalone test succeeds, troubleshoot the CraftBeerPi plugin
