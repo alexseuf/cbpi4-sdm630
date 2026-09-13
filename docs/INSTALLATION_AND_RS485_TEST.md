@@ -39,6 +39,37 @@ A successful installation ends with output similar to:
 Successfully installed cbpi4-sdm630-0.1.0 minimalmodbus-2.1.1
 ```
 
+## Update an existing plugin installation
+
+To update the plugin to the newest version from the GitHub `main` branch:
+
+```bash
+pipx runpip cbpi4 install --upgrade https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
+```
+
+Then restart CraftBeerPi so the new plugin code is loaded:
+
+```bash
+sudo systemctl restart craftbeerpi.service
+```
+
+Check the installed package version with:
+
+```bash
+pipx runpip cbpi4 show cbpi4-sdm630
+```
+
+The loaded plugin version can also be checked in the CraftBeerPi web interface on the Plugins page.
+
+If the GitHub repository contains changed code but the package version in `setup.py` has not changed, pip may decide that nothing needs to be updated. In that case force a reinstall:
+
+```bash
+pipx runpip cbpi4 install --upgrade --force-reinstall https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
+sudo systemctl restart craftbeerpi.service
+```
+
+This does not delete the existing CraftBeerPi hardware/sensor configuration; it replaces the installed Python package in the `cbpi4` pipx environment.
+
 ## CraftBeerPi service / restart
 
 Current CraftBeerPi installations use the CraftBeerPi autostart mechanism (`cbpi autostart on`) and a systemd unit named `craftbeerpi.service`.
