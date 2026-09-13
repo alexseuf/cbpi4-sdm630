@@ -21,6 +21,30 @@ The plugin can now be used as a compact electrical-energy dashboard inside Craft
 
 The short-term counters work like a vehicle trip counter. Resetting them does **not** modify or reset the SDM630's own cumulative energy registers.
 
+## Meter variants
+
+The Eastron SDM family contains different hardware variants. The important distinction is how the current is measured.
+
+### SDM630 direct measurement
+
+The directly connected SDM630-Modbus measures the phase currents without external current transformers (CTs). The load conductors are routed through the meter's current terminals. This is convenient for installations within the meter's specified direct-current range.
+
+![Eastron SDM630-Modbus direct measurement](docs/images/sdm630-modbus-direct.jpg)
+
+### SDM630MCT with external current transformers
+
+The SDM630MCT is intended for external CTs. This is useful when the load current cannot or should not be routed directly through the meter. The photo below shows an SDM630MCT together with split-core CTs. An SDM120CT single-phase meter is shown on the right for comparison.
+
+![Eastron SDM630MCT with CTs and SDM120CT](docs/images/sdm630mct-and-sdm120ct.jpg)
+
+On the pictured SDM630MCT, the communication terminals are marked directly on the housing. The RS485 pair is labelled `TX- / B` and `TX+ / A`.
+
+![SDM630MCT RS485 A and B terminals](docs/images/sdm630mct-rs485-terminals.jpg)
+
+> **Compatibility note:** This project currently targets the **three-phase SDM630 Modbus family**. Single-phase Eastron meters such as the SDM120/SDM120CT family are **not currently supported** by this plugin. Their Modbus register maps and available measurements can differ, so they should not simply be configured as an SDM630 sensor.
+
+Always verify the terminal markings and manual for the exact meter variant before wiring it.
+
 ## Official Eastron Modbus documentation
 
 Official manufacturer documentation:
