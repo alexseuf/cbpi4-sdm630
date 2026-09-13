@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import glob
+import json
 import logging
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Tuple
 
 import minimalmodbus
@@ -18,9 +20,9 @@ logger = logging.getLogger(__name__)
 # properties empty, so sensible defaults are applied in __init__ via _prop().
 MEASUREMENTS = {
     "Gesamtleistung": {"address": 52, "decimals": 1},   # 30053, W
-    "Leistung L1": {"address": 12, "decimals": 1},      # 30013, W
-    "Leistung L2": {"address": 14, "decimals": 1},      # 30015, W
-    "Leistung L3": {"address": 16, "decimals": 1},      # 30017, W
+    "Leistung L1": {"address": 12, "decimals": 1},     # 30013, W
+    "Leistung L2": {"address": 14, "decimals": 1},     # 30015, W
+    "Leistung L3": {"address": 16, "decimals": 1},     # 30017, W
     "Spannung L1": {"address": 0, "decimals": 1},      # 30001, V L-N
     "Spannung L2": {"address": 2, "decimals": 1},      # 30003, V L-N
     "Spannung L3": {"address": 4, "decimals": 1},      # 30005, V L-N
@@ -29,6 +31,9 @@ MEASUREMENTS = {
     "Strom L3": {"address": 10, "decimals": 2},        # 30011, A
     "Energie Bezug": {"address": 72, "decimals": 3},   # 30073, kWh import
     "Energie Einspeisung": {"address": 74, "decimals": 3},  # 30075, kWh export
+    # Derived values calculated from the cumulative energy registers above.
+    "Bezug 24 h": {"derived": "import_24h", "decimals": 3},
+    "Einspeisung 24 h": {"derived": "export_24h", "decimals": 3},
 }
 
 PARITY = {
@@ -36,6 +41,14 @@ PARITY = {
     "E": serial.PARITY_EVEN,
     "O": serial.PARITY_ODD,
 }
+
+# The SDM630 has no native "last 24 h" register. The plugin stores one
+# import/export counter sample per minute and keeps enough history to calculate
+# a rolling 24-hour difference. The history survives CraftBeerPi restarts.
+HISTORY_SAMPLE_INTERVAL = 60.0
+HISTORY_RETENTION = 26 * 60 * 60
+HISTORY_WINDOW = 24 * 60 * 60
+HISTORY_FILE = Path.home() / ".craftbeerpi4-sdm630" / "energy_history.json"
 
 
 def _get_serial_ports():
@@ -88,6 +101,9 @@ SERIAL_PORT_OPTIONS = _get_serial_ports()
 DEFAULT_PORT = SERIAL_PORT_OPTIONS[0]
 
 _bus_locks: Dict[str, asyncio.Lock] = {}
+_history_lock = asyncio.Lock()
+_history_loaded = False
+_history = {"version": 1, "meters": {}}
 
 
 @dataclass
@@ -107,6 +123,106 @@ def _prop(props, name, default):
     return value
 
 
+def _history_key(port: str, slave: int) -> str:
+    return f"{port}|{slave}"
+
+
+def _load_history_sync():
+    global _history_loaded, _history
+    if _history_loaded:
+        return
+
+    try:
+        if HISTORY_FILE.exists():
+            with HISTORY_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("meters"), dict):
+                _history = data
+    except Exception as e:
+        logger.warning("SDM630: energy history could not be loaded from %s: %s",
+                       HISTORY_FILE, e)
+
+    _history_loaded = True
+
+
+def _save_history_sync():
+    try:
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = HISTORY_FILE.with_suffix(".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(_history, f, separators=(",", ":"))
+        os.replace(tmp, HISTORY_FILE)
+    except Exception as e:
+        logger.warning("SDM630: energy history could not be saved to %s: %s",
+                       HISTORY_FILE, e)
+
+
+def _counter_at(samples, field, target_ts):
+    """Interpolate a cumulative counter at target_ts from stored samples."""
+    if not samples or float(samples[0]["t"]) > target_ts:
+        return None
+
+    previous = samples[0]
+    for current in samples[1:]:
+        if float(current["t"]) >= target_ts:
+            dt = float(current["t"]) - float(previous["t"])
+            if dt <= 0:
+                return float(previous[field])
+            fraction = (target_ts - float(previous["t"])) / dt
+            return float(previous[field]) + fraction * (
+                float(current[field]) - float(previous[field])
+            )
+        previous = current
+
+    return float(previous[field])
+
+
+def _update_history_sync(port: str, slave: int, import_kwh: float,
+                         export_kwh: float, now_wall: float):
+    _load_history_sync()
+    key = _history_key(port, slave)
+    samples = _history["meters"].setdefault(key, [])
+
+    # If the SDM630 counter was reset or the meter was replaced, start a new
+    # history period instead of reporting a negative 24-hour value.
+    if samples:
+        last = samples[-1]
+        if (import_kwh + 1e-6 < float(last["import"]) or
+                export_kwh + 1e-6 < float(last["export"])):
+            logger.warning("SDM630: energy counter reset detected for %s; "
+                           "24 h history starts again", key)
+            samples.clear()
+
+    should_store = (
+        not samples or
+        (now_wall - float(samples[-1]["t"])) >= HISTORY_SAMPLE_INTERVAL
+    )
+
+    if should_store:
+        samples.append({
+            "t": now_wall,
+            "import": import_kwh,
+            "export": export_kwh,
+        })
+
+        # Keep one sample before the retention boundary for interpolation.
+        cutoff = now_wall - HISTORY_RETENTION
+        while len(samples) > 1 and float(samples[1]["t"]) < cutoff:
+            samples.pop(0)
+
+        _save_history_sync()
+
+    target = now_wall - HISTORY_WINDOW
+    base_import = _counter_at(samples, "import", target)
+    base_export = _counter_at(samples, "export", target)
+
+    # A genuine rolling 24-hour value only exists after 24 hours of history.
+    import_24h = 0.0 if base_import is None else max(0.0, import_kwh - base_import)
+    export_24h = 0.0 if base_export is None else max(0.0, export_kwh - base_export)
+
+    return import_24h, export_24h
+
+
 def _read_all_sync(port: str, slave: int, baudrate: int, parity: str,
                    stopbits: int, timeout: float):
     instrument = minimalmodbus.Instrument(port, slave, mode=minimalmodbus.MODE_RTU)
@@ -121,6 +237,8 @@ def _read_all_sync(port: str, slave: int, baudrate: int, parity: str,
 
         values = {}
         for name, cfg in MEASUREMENTS.items():
+            if "address" not in cfg:
+                continue
             values[name] = float(instrument.read_float(
                 registeraddress=cfg["address"],
                 functioncode=4,
@@ -152,6 +270,20 @@ async def _get_values(port, slave, baudrate, parity, stopbits, timeout, cache_ti
         values = await asyncio.to_thread(
             _read_all_sync, port, slave, baudrate, parity, stopbits, timeout
         )
+
+        async with _history_lock:
+            import_24h, export_24h = await asyncio.to_thread(
+                _update_history_sync,
+                port,
+                slave,
+                values["Energie Bezug"],
+                values["Energie Einspeisung"],
+                time.time(),
+            )
+
+        values["Bezug 24 h"] = import_24h
+        values["Einspeisung 24 h"] = export_24h
+
         entry.values = values
         entry.timestamp = time.monotonic()
         return values
