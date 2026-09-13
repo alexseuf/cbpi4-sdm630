@@ -14,11 +14,21 @@ from cbpi.api import *
 logger = logging.getLogger(__name__)
 
 # Eastron SDM630 input registers, 0-based Modbus PDU addresses.
-REGISTERS = {
-    "Leistung L1": 12,       # 30013
-    "Leistung L2": 14,       # 30015
-    "Leistung L3": 16,       # 30017
-    "Gesamtleistung": 52,    # 30053
+# Default handling follows the common CBPi plugin pattern: the UI may leave
+# properties empty, so sensible defaults are applied in __init__ via _prop().
+MEASUREMENTS = {
+    "Gesamtleistung": {"address": 52, "decimals": 1},   # 30053, W
+    "Leistung L1": {"address": 12, "decimals": 1},      # 30013, W
+    "Leistung L2": {"address": 14, "decimals": 1},      # 30015, W
+    "Leistung L3": {"address": 16, "decimals": 1},      # 30017, W
+    "Spannung L1": {"address": 0, "decimals": 1},      # 30001, V L-N
+    "Spannung L2": {"address": 2, "decimals": 1},      # 30003, V L-N
+    "Spannung L3": {"address": 4, "decimals": 1},      # 30005, V L-N
+    "Strom L1": {"address": 6, "decimals": 2},         # 30007, A
+    "Strom L2": {"address": 8, "decimals": 2},         # 30009, A
+    "Strom L3": {"address": 10, "decimals": 2},        # 30011, A
+    "Energie Bezug": {"address": 72, "decimals": 3},   # 30073, kWh import
+    "Energie Einspeisung": {"address": 74, "decimals": 3},  # 30075, kWh export
 }
 
 PARITY = {
@@ -55,8 +65,6 @@ def _get_serial_ports():
         add_path(path)
 
     # 2) Raspberry Pi stable aliases for onboard UARTs.
-    # serial0 normally points to the primary UART enabled in the device tree.
-    # serial1 can exist on some configurations as the secondary UART.
     for path in ("/dev/serial0", "/dev/serial1"):
         add_path(path)
 
@@ -65,14 +73,11 @@ def _get_serial_ports():
         for path in sorted(glob.glob(pattern)):
             add_path(path)
 
-    # 4) Direct onboard UART device nodes. These are useful when no serial0/1
-    # alias exists or when a specific UART must be selected deliberately.
+    # 4) Direct onboard UART device nodes.
     for pattern in ("/dev/ttyAMA*", "/dev/ttyS*"):
         for path in sorted(glob.glob(pattern)):
             add_path(path)
 
-    # Keep the configuration dialog usable even when no serial interface is
-    # visible while CraftBeerPi starts.
     if not ports:
         ports.append("/dev/ttyUSB0")
 
@@ -82,8 +87,6 @@ def _get_serial_ports():
 SERIAL_PORT_OPTIONS = _get_serial_ports()
 DEFAULT_PORT = SERIAL_PORT_OPTIONS[0]
 
-# One lock per physical serial port. This also serializes access if more than
-# one Modbus slave is later used on the same RS485 bus.
 _bus_locks: Dict[str, asyncio.Lock] = {}
 
 
@@ -117,9 +120,9 @@ def _read_all_sync(port: str, slave: int, baudrate: int, parity: str,
         instrument.close_port_after_each_call = False
 
         values = {}
-        for name, address in REGISTERS.items():
+        for name, cfg in MEASUREMENTS.items():
             values[name] = float(instrument.read_float(
-                registeraddress=address,
+                registeraddress=cfg["address"],
                 functioncode=4,
                 number_of_registers=2,
                 byteorder=minimalmodbus.BYTEORDER_BIG,
@@ -156,25 +159,21 @@ async def _get_values(port, slave, baudrate, parity, stopbits, timeout, cache_ti
 
 @parameters([
     Property.Select(label="Port", options=SERIAL_PORT_OPTIONS,
-                    description="Aktive serielle Schnittstelle; /dev/serial/by-id und Raspberry-Pi-UARTs werden automatisch erkannt"),
+                    description="Serielle Schnittstelle; /dev/serial/by-id und Raspberry-Pi-UARTs werden automatisch erkannt"),
     Property.Number(label="Slave", configurable=True, default_value=1,
-                    description="Modbus-Adresse des SDM630 (Default: 1)"),
-    # CBPi 4.7.x does not expose a default_value for Select properties in its
-    # plugin metadata. Therefore the desired default is deliberately the first
-    # option in each Select list.
+                    description="Modbus-Adresse des SDM630 (leer = 1)"),
     Property.Select(label="Baudrate", options=[9600, 2400, 4800, 19200, 38400],
-                    description="Modbus-Baudrate (Default: 9600)"),
+                    description="Modbus-Baudrate (leer = 9600)"),
     Property.Select(label="Parity", options=["N", "E", "O"],
-                    description="Paritaet (Default: N)"),
+                    description="Paritaet (leer = N)"),
     Property.Select(label="Stopbits", options=[1, 2],
-                    description="Stopbits (Default: 1)"),
-    Property.Select(label="Messwert",
-                    options=["Gesamtleistung", "Leistung L1", "Leistung L2", "Leistung L3"],
-                    description="Anzuzeigender Leistungswert (Default: Gesamtleistung)"),
+                    description="Stopbits (leer = 1)"),
+    Property.Select(label="Messwert", options=list(MEASUREMENTS.keys()),
+                    description="Anzuzeigender Messwert (leer = Gesamtleistung)"),
     Property.Select(label="Intervall", options=[2, 1, 5, 10, 30, 60],
-                    description="Aktualisierungsintervall in Sekunden (Default: 2 s)"),
+                    description="Aktualisierungsintervall in Sekunden (leer = 2 s)"),
     Property.Number(label="Timeout", configurable=True, default_value=0.5,
-                    description="Serieller Timeout in Sekunden (Default: 0.5 s)"),
+                    description="Serieller Timeout in Sekunden (leer = 0.5 s)"),
 ])
 class SDM630PowerSensor(CBPiSensor):
     def __init__(self, cbpi, id, props):
@@ -188,7 +187,7 @@ class SDM630PowerSensor(CBPiSensor):
         self.measurement = str(_prop(self.props, "Messwert", "Gesamtleistung"))
         self.interval = float(_prop(self.props, "Intervall", 2))
         self.timeout = float(_prop(self.props, "Timeout", 0.5))
-        if self.measurement not in REGISTERS:
+        if self.measurement not in MEASUREMENTS:
             self.measurement = "Gesamtleistung"
 
     async def run(self):
@@ -199,7 +198,8 @@ class SDM630PowerSensor(CBPiSensor):
                     self.port, self.slave, self.baudrate, self.parity,
                     self.stopbits, self.timeout, cache_time
                 )
-                self.value = round(float(values[self.measurement]), 1)
+                decimals = MEASUREMENTS[self.measurement]["decimals"]
+                self.value = round(float(values[self.measurement]), decimals)
                 self.push_update(self.value)
                 self.log_data(self.value)
             except Exception as e:
