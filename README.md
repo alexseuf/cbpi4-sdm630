@@ -35,12 +35,44 @@ Direct SDM630 values:
 
 Derived values calculated by the plugin:
 
-- Bezug 24 h: energy imported during the rolling last 24 hours, kWh
-- Einspeisung 24 h: energy exported during the rolling last 24 hours, kWh
+- Kurzzeitzähler Bezug: imported energy since the last manual reset, kWh
+- Kurzzeitzähler Einspeisung: exported energy since the last manual reset, kWh
 
-The SDM630 does **not** provide dedicated last-24-hour registers. These two values are calculated from the cumulative import/export counters.
+The short-term counters work like a trip counter in a vehicle. The SDM630 cumulative energy registers themselves are never reset. Instead, the plugin stores the current import/export counter readings as a baseline and displays the difference from that baseline.
 
-The direct registers are read as 32-bit floating point values with Modbus function code 04.
+## Resetting the short-term counters
+
+The sensor type provides the CraftBeerPi action:
+
+`Kurzzeitzähler nullen`
+
+This action resets **both** short-term counters together:
+
+- Kurzzeitzähler Bezug → 0.000 kWh
+- Kurzzeitzähler Einspeisung → 0.000 kWh
+
+The underlying SDM630 total energy counters remain unchanged.
+
+The reset baseline is stored persistently in:
+
+```text
+~/.craftbeerpi4-sdm630/short_term_counters.json
+```
+
+Therefore the short-term counters survive CraftBeerPi restarts and Raspberry Pi reboots.
+
+The state is kept separately for every combination of serial port and Modbus slave address.
+
+In the CraftBeerPi dashboard, sensor actions can be enabled for a SensorData widget. The widget then shows its action menu, where `Kurzzeitzähler nullen` can be selected.
+
+## Data format
+
+The direct SDM630 registers are read as:
+
+- Modbus Function Code 04 – Read Input Registers
+- IEEE-754 Float32
+- two 16-bit Modbus registers per value
+- big-endian register order
 
 Display rounding:
 
@@ -48,30 +80,6 @@ Display rounding:
 - voltage: 1 decimal place
 - current: 2 decimal places
 - energy: 3 decimal places
-
-## 24-hour energy history
-
-For `Bezug 24 h` and `Einspeisung 24 h`, the plugin stores one sample of the cumulative import/export counters approximately once per minute.
-
-History file:
-
-```text
-~/.craftbeerpi4-sdm630/energy_history.json
-```
-
-Properties:
-
-- rolling window: 24 hours
-- storage interval: about 60 seconds
-- retained history: about 26 hours
-- history survives CraftBeerPi restarts
-- one independent history is kept per serial port and Modbus slave address
-- interpolation between adjacent samples is used at the 24-hour boundary
-- if the SDM630 energy counter is reset or a meter is replaced, the affected history starts again
-
-A valid 24-hour value is only available after the plugin has collected a full 24 hours of history. Until then, `Bezug 24 h` and `Einspeisung 24 h` return `0.000 kWh`.
-
-History is collected whenever at least one sensor instance for the corresponding SDM630 is active, because every normal SDM630 read also reads the cumulative import/export counters.
 
 ## CraftBeerPi default handling
 
@@ -124,7 +132,7 @@ To update an already installed version to the newest version from the `main` bra
 pipx runpip cbpi4 install --upgrade https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
 ```
 
-Then restart CraftBeerPi so the updated plugin is loaded:
+Then restart CraftBeerPi:
 
 ```bash
 sudo systemctl restart craftbeerpi.service
@@ -136,15 +144,11 @@ Check the installed package version with:
 pipx runpip cbpi4 show cbpi4-sdm630
 ```
 
-You can also verify the loaded version in the CraftBeerPi web interface on the Plugins page.
-
-If pip reports that the same version is already installed but the repository contains newer code with an unchanged version number, reinstall forcibly with:
+If pip reports that the same version is already installed but the repository contains newer code, force a reinstall with:
 
 ```bash
 pipx runpip cbpi4 install --upgrade --force-reinstall https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
 ```
-
-Afterwards restart CraftBeerPi again.
 
 A complete step-by-step description of the tested Raspberry Pi setup, the CraftBeerPi service/restart commands, FTDI wiring and the standalone RS485/Modbus test is available here:
 
@@ -164,10 +168,10 @@ Create one hardware sensor of type `SDM630 Power` for every value you want to di
 8. `SDM630 Strom L1` with `Messwert = Strom L1`
 9. `SDM630 Strom L2` with `Messwert = Strom L2`
 10. `SDM630 Strom L3` with `Messwert = Strom L3`
-11. `SDM630 Bezug` with `Messwert = Energie Bezug`
-12. `SDM630 Einspeisung` with `Messwert = Energie Einspeisung`
-13. `SDM630 Bezug 24 h` with `Messwert = Bezug 24 h`
-14. `SDM630 Einspeisung 24 h` with `Messwert = Einspeisung 24 h`
+11. `SDM630 Bezug gesamt` with `Messwert = Energie Bezug`
+12. `SDM630 Einspeisung gesamt` with `Messwert = Energie Einspeisung`
+13. `SDM630 Kurzzeit Bezug` with `Messwert = Kurzzeitzähler Bezug`
+14. `SDM630 Kurzzeit Einspeisung` with `Messwert = Kurzzeitzähler Einspeisung`
 
 Use identical Port, Slave, Baudrate, Parity and Stopbits settings for all sensor instances belonging to the same SDM630.
 
