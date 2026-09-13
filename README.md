@@ -4,6 +4,20 @@ CraftBeerPi 4 plugin for an Eastron SDM630 connected via Modbus RTU and a USB/RS
 
 ![CraftBeerPi SDM630 dashboard](docs/images/dashboard.jpg)
 
+## Contents
+
+- [🆕 New in v0.1.5](#-new-in-v015)
+- [Why a wired Modbus meter?](#why-a-wired-modbus-meter)
+- [Meter variants](#meter-variants)
+- [USB/RS485 connection to the Raspberry Pi](#usbrs485-connection-to-the-raspberry-pi)
+- [Official Eastron Modbus documentation](#official-eastron-modbus-documentation)
+- [Measurements](#measurements)
+- [Resetting the short-term counters](#resetting-the-short-term-counters)
+- [CraftBeerPi hardware configuration](#craftbeerpi-hardware-configuration)
+- [Installation](#installation)
+- [Updating the plugin](#updating-the-plugin)
+- [Installation and RS485 test](#installation-and-rs485-test)
+
 ## 🆕 New in v0.1.5
 
 > **Resettable import/export trip counters, expanded three-phase measurements and convenient serial-port selection.**
@@ -60,6 +74,31 @@ On the pictured SDM630MCT, the communication terminals are marked directly on th
 > **Compatibility note:** This project currently targets the **three-phase SDM630 Modbus family**. Single-phase Eastron meters such as the SDM120/SDM120CT family are **not currently supported** by this plugin. Their Modbus register maps and available measurements can differ, so they should not simply be configured as an SDM630 sensor.
 
 Always verify the terminal markings and manual for the exact meter variant before wiring it.
+
+## USB/RS485 connection to the Raspberry Pi
+
+The tested setup uses an **FTDI USB-RS485-WE / FT232R** adapter. It plugs directly into a USB port of the Raspberry Pi; the cable wires provide the RS485 connection to the SDM630.
+
+![FTDI USB-RS485-WE adapter](docs/images/usb-rs485-we-adapter.jpg)
+
+The tested FTDI cable uses the following wire assignment:
+
+| Wire colour | Function | SDM630 side |
+|---|---|---|
+| Orange | Data+ / A | RS485 A / TX+ |
+| Yellow | Data- / B | RS485 B / TX- |
+| Black | GND | GND, if used |
+| Brown | Terminator 1 | termination only |
+| Green | Terminator 2 | termination only |
+| Red | +5 V output | **do not use to power the SDM630** |
+
+The individual wires of the USB-RS485-WE cable can be seen here:
+
+![FTDI USB-RS485-WE wiring](docs/images/usb-rs485-we-wiring.jpg)
+
+For the SDM630MCT shown above, connect **orange Data+ / A to `TX+ / A`** and **yellow Data- / B to `TX- / B`**. Always check the markings on the exact meter variant because terminal layouts can differ.
+
+The brown and green wires are the two ends of the FTDI cable's internal 120-ohm termination resistor. Use this termination only when appropriate for the RS485 bus topology. The red wire is a USB-derived +5 V output and must not be connected to the SDM630 mains/auxiliary supply.
 
 ## Official Eastron Modbus documentation
 
