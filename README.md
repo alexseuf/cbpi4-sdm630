@@ -33,7 +33,41 @@ On a CraftBeerPi 4 installation managed with pipx, install directly from GitHub:
 pipx runpip cbpi4 install https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
 ```
 
-Then restart CraftBeerPi.
+Then restart CraftBeerPi:
+
+```bash
+sudo systemctl restart craftbeerpi.service
+```
+
+## Updating the plugin
+
+To update an already installed version to the newest version from the `main` branch, run:
+
+```bash
+pipx runpip cbpi4 install --upgrade https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
+```
+
+Then restart CraftBeerPi so the updated plugin is loaded:
+
+```bash
+sudo systemctl restart craftbeerpi.service
+```
+
+Check the installed package version with:
+
+```bash
+pipx runpip cbpi4 show cbpi4-sdm630
+```
+
+You can also verify the loaded version in the CraftBeerPi web interface on the Plugins page.
+
+If pip reports that the same version is already installed but the repository contains newer code with an unchanged version number, reinstall forcibly with:
+
+```bash
+pipx runpip cbpi4 install --upgrade --force-reinstall https://github.com/alexseuf/cbpi4-sdm630/archive/main.zip
+```
+
+Afterwards restart CraftBeerPi again.
 
 A complete step-by-step description of the tested Raspberry Pi setup, the CraftBeerPi service/restart commands, FTDI wiring and the standalone RS485/Modbus test is available here:
 
