@@ -18,7 +18,7 @@ A repository-local description of the exact registers used by this plugin is ava
 
 The plugin provides a CraftBeerPi sensor type named `SDM630 Power`. Multiple sensor instances can be created, each selecting one SDM630 measurement.
 
-Available measurements:
+Direct SDM630 values:
 
 - Gesamtleistung: register 30053 / PDU address 52, W
 - Leistung L1: register 30013 / PDU address 12, W
@@ -33,7 +33,14 @@ Available measurements:
 - Energie Bezug: register 30073 / PDU address 72, kWh
 - Energie Einspeisung: register 30075 / PDU address 74, kWh
 
-The registers are read as 32-bit floating point values with Modbus function code 04.
+Derived values calculated by the plugin:
+
+- Bezug 24 h: energy imported during the rolling last 24 hours, kWh
+- Einspeisung 24 h: energy exported during the rolling last 24 hours, kWh
+
+The SDM630 does **not** provide dedicated last-24-hour registers. These two values are calculated from the cumulative import/export counters.
+
+The direct registers are read as 32-bit floating point values with Modbus function code 04.
 
 Display rounding:
 
@@ -41,6 +48,30 @@ Display rounding:
 - voltage: 1 decimal place
 - current: 2 decimal places
 - energy: 3 decimal places
+
+## 24-hour energy history
+
+For `Bezug 24 h` and `Einspeisung 24 h`, the plugin stores one sample of the cumulative import/export counters approximately once per minute.
+
+History file:
+
+```text
+~/.craftbeerpi4-sdm630/energy_history.json
+```
+
+Properties:
+
+- rolling window: 24 hours
+- storage interval: about 60 seconds
+- retained history: about 26 hours
+- history survives CraftBeerPi restarts
+- one independent history is kept per serial port and Modbus slave address
+- interpolation between adjacent samples is used at the 24-hour boundary
+- if the SDM630 energy counter is reset or a meter is replaced, the affected history starts again
+
+A valid 24-hour value is only available after the plugin has collected a full 24 hours of history. Until then, `Bezug 24 h` and `Einspeisung 24 h` return `0.000 kWh`.
+
+History is collected whenever at least one sensor instance for the corresponding SDM630 is active, because every normal SDM630 read also reads the cumulative import/export counters.
 
 ## CraftBeerPi default handling
 
@@ -135,6 +166,8 @@ Create one hardware sensor of type `SDM630 Power` for every value you want to di
 10. `SDM630 Strom L3` with `Messwert = Strom L3`
 11. `SDM630 Bezug` with `Messwert = Energie Bezug`
 12. `SDM630 Einspeisung` with `Messwert = Energie Einspeisung`
+13. `SDM630 Bezug 24 h` with `Messwert = Bezug 24 h`
+14. `SDM630 Einspeisung 24 h` with `Messwert = Einspeisung 24 h`
 
 Use identical Port, Slave, Baudrate, Parity and Stopbits settings for all sensor instances belonging to the same SDM630.
 
